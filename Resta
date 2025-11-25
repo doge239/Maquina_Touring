@@ -1,0 +1,169 @@
+// Pines para motor paso a paso 28BYJ-48
+const int stepPins[4] = {8, 9, 10, 11};
+
+// Secuencia correcta para 28BYJ-48 (8 pasos)
+const int stepSequence[8][4] = {
+  {1, 0, 0, 1},  // Paso 1
+  {1, 0, 0, 0},  // Paso 2
+  {1, 1, 0, 0},  // Paso 3
+  {0, 1, 0, 0},  // Paso 4
+  {0, 1, 1, 0},  // Paso 5
+  {0, 0, 1, 0},  // Paso 6
+  {0, 0, 1, 1},  // Paso 7
+  {0, 0, 0, 1}   // Paso 8
+};
+
+// Pines para HC-SR04
+const int trigPin = 13;
+const int echoPin = 12;
+
+// Variables de control - VELOCIDAD AUMENTADA
+int velocidadMotor = 1; // 1ms entre pasos (MUY RÁPIDO)
+unsigned long ultimaMedicion = 0;
+const unsigned long INTERVALO_MEDICION = 80; // ms
+
+// Contador y variables para RESTA
+int numero1 = 0;
+int numero2 = 0;
+int resultado = 0;
+bool esperandoNumero2 = false;
+bool esperandoResultado = false;
+
+// UMBRALES PARA RESTA
+const float UMBRAL_NUMERO = 2.5;        // cm - Tamaño para números
+const float UMBRAL_SEPARADOR_RESTA = 3.5; // cm - Tamaño para separador (-)
+const float UMBRAL_RESULTADO = 7.5;     // cm - Tamaño para resultado
+
+unsigned long tiempoUltimaDeteccion = 0;
+const unsigned long TIEMPO_ENTRE_DETECCIONES = 800; // ms
+bool objetoEnZona = false;
+
+void setup() {
+  Serial.begin(9600);
+  
+  // Configurar pines del motor
+  for (int i = 0; i < 4; i++) {
+    pinMode(stepPins[i], OUTPUT);
+  }
+  
+  // Configurar sensor
+  pinMode(trigPin, OUTPUT);
+  pinMode(echoPin, INPUT);
+  digitalWrite(trigPin, LOW);
+  
+  Serial.println(SISTEMA DE RESTA ACTIVADO");
+  Serial.println("Motor: VELOCIDAD MÁXIMA");
+  Serial.println("Umbrales:");
+  Serial.println("   Números: 2.5 cm");
+  Serial.println("   Separador (-): 3.5 cm"); 
+  Serial.println("   Resultado: 7.5 cm");
+  Serial.println("======================================");
+}
+
+float medirDistancia() {
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+  
+  long duration = pulseIn(echoPin, HIGH, 20000);
+  if (duration == 0) return 999;
+  
+  return duration * 0.034 / 2;
+}
+
+void moverMotorRapido() {
+  static int pasoActual = 0;
+  static unsigned long ultimoPaso = 0;
+  unsigned long tiempoActual = millis();
+  
+  // Motor MUY RÁPIDO
+  if (tiempoActual - ultimoPaso >= velocidadMotor) {
+    for (int pin = 0; pin < 4; pin++) {
+      digitalWrite(stepPins[pin], stepSequence[pasoActual][pin]);
+    }
+    
+    pasoActual = (pasoActual + 1) % 8;
+    ultimoPaso = tiempoActual;
+  }
+}
+
+void procesarResta(float distancia) {
+  unsigned long tiempoActual = millis();
+  
+  if (distancia <= UMBRAL_RESULTADO && distancia > 1.0) {
+    if (!objetoEnZona && (tiempoActual - tiempoUltimaDeteccion) >= TIEMPO_ENTRE_DETECCIONES) {
+      
+      // DETERMINAR TIPO DE OBJETO
+      if (distancia <= UMBRAL_NUMERO) {
+        // ES UN NÚMERO
+        if (!esperandoNumero2 && !esperandoResultado) {
+          numero1++;
+          Serial.print("Número 1: ");
+          Serial.println(numero1);
+        } else if (esperandoNumero2) {
+          numero2++;
+          Serial.print("Número 2: ");
+          Serial.println(numero2);
+        }
+      }
+      else if (distancia <= UMBRAL_SEPARADOR_RESTA) {
+        // ES SEPARADOR DE RESTA (-)
+        esperandoNumero2 = true;
+        Serial.println("SEPARADOR (-) detectado - Esperando número 2");
+      }
+      else if (distancia <= UMBRAL_RESULTADO) {
+        // ES RESULTADO
+        if (esperandoNumero2 && !esperandoResultado) {
+          resultado = numero1 - numero2;
+          if (resultado < 0) resultado = 0; // Evitar resultados negativos
+          esperandoResultado = true;
+          Serial.println("======================================");
+          Serial.print("RESULTADO: ");
+          Serial.print(numero1);
+          Serial.print(" - ");
+          Serial.print(numero2);
+          Serial.print(" = ");
+          Serial.println(resultado);
+          Serial.println("======================================");
+        }
+      }
+      
+      objetoEnZona = true;
+      tiempoUltimaDeteccion = tiempoActual;
+      
+    } else {
+      Serial.print("Objeto en zona: ");
+      Serial.print(distancia, 1);
+      Serial.println(" cm");
+    }
+  } else {
+    // Objeto salió de la zona
+    objetoEnZona = false;
+  }
+}
+
+void loop() {
+  //MOTOR A VELOCIDAD MÁXIMA
+  moverMotorRapido();
+  
+  //MEDICIÓN Y PROCESAMIENTO
+  unsigned long tiempoActual = millis();
+  if (tiempoActual - ultimaMedicion >= INTERVALO_MEDICION) {
+    float distancia = medirDistancia();
+    
+    // Mostrar información
+    
+    Serial.print(distancia, 1);
+    Serial.print(" cm | N1: ");
+    Serial.print(numero1);
+    Serial.print(" | N2: ");
+    Serial.print(numero2);
+    Serial.print(" | Resultado: ");
+    Serial.print(resultado);
+    
+    // Procesar lógica de resta
+    procesarResta(distancia);
+    
+    ultimaMedicion = tiempoActual;
+  }
+}
